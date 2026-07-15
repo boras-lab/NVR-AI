@@ -1,0 +1,23 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: "fastapi-services"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["api-service:8000"]
+
+  - job_name: "cv-engine"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["cv-engine:8001"]
+
+  # For GPU monitoring, assuming dcgm-exporter is deployed
+  - job_name: "nvidia-dcgm"
+    static_configs:
+      - targets: ["dcgm-exporter:9400"]

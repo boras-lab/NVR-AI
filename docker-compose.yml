@@ -1,0 +1,182 @@
+version: '3.8'
+
+services:
+  # Primary Database (Relational & Time-Series)
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: nvr_postgres
+    environment:
+      POSTGRES_USER: nvr_admin
+      POSTGRES_PASSWORD: nvr_password_secure
+      POSTGRES_DB: ai_nvr
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nvr_admin -d ai_nvr"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # In-memory Datastore / Message Broker
+  redis:
+    image: redis:7-alpine
+    container_name: nvr_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+
+  # Object Storage (S3 Compatible)
+  minio:
+    image: minio/minio:latest
+    container_name: nvr_minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadminsecure
+    ports:
+      - "9000:9000" # API
+      - "9001:9001" # Web Console
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # Microservices Backends
+  auth_service:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: nvr_auth
+    command: ["uvicorn", "auth_service.main:app", "--host", "0.0.0.0", "--port", "8001"]
+    ports:
+      - "8001:8001"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://nvr_admin:nvr_password_secure@postgres:5432/ai_nvr
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  camera_service:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: nvr_camera
+    command: ["uvicorn", "camera_service.main:app", "--host", "0.0.0.0", "--port", "8002"]
+    ports:
+      - "8002:8002"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://nvr_admin:nvr_password_secure@postgres:5432/ai_nvr
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  stream_service:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: nvr_stream
+    command: ["uvicorn", "stream_service.main:app", "--host", "0.0.0.0", "--port", "8003"]
+    ports:
+      - "8003:8003"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://nvr_admin:nvr_password_secure@postgres:5432/ai_nvr
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  event_service:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: nvr_event
+    command: ["uvicorn", "event_service.main:app", "--host", "0.0.0.0", "--port", "8004"]
+    ports:
+      - "8004:8004"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://nvr_admin:nvr_password_secure@postgres:5432/ai_nvr
+    volumes:
+      - clips_data:/clips
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  telegram_service:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: nvr_telegram
+    command: ["uvicorn", "telegram_service.main:app", "--host", "0.0.0.0", "--port", "8005"]
+    ports:
+      - "8005:8005"
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-8940512171:AAHALHnQ6vvK732E6nv3w-3OwDOS3OyQHG0}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-7465997038}
+    volumes:
+      - clips_data:/clips
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  archive_service:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: nvr_archive
+    command: ["uvicorn", "archive_service.main:app", "--host", "0.0.0.0", "--port", "8006"]
+    ports:
+      - "8006:8006"
+    environment:
+      - MINIO_URL=minio:9000
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadminsecure
+    depends_on:
+      minio:
+        condition: service_healthy
+
+  # CV Engine
+  cv_engine:
+    build: 
+      context: ./cv_engine
+      dockerfile: Dockerfile
+    container_name: nvr_cv_engine
+    environment:
+      - EVENT_SERVICE_URL=http://event_service:8004
+      - CAMERA_SERVICE_URL=http://camera_service:8002/cameras
+    volumes:
+      - clips_data:/clips
+    depends_on:
+      - event_service
+      - camera_service
+
+  # Frontend
+  frontend:
+    build: 
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: nvr_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8001
+      - NEXT_PUBLIC_CAMERA_API_URL=http://localhost:8002
+      - NEXT_PUBLIC_STREAM_API_URL=http://localhost:8003
+      - NEXT_PUBLIC_EVENT_API_URL=http://localhost:8004
+    depends_on:
+      - auth_service
+      - camera_service
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  clips_data:

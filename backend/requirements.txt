@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+sqlalchemy[asyncio]
+alembic
+asyncpg
+psycopg2-binary
+pydantic
+pydantic[email]
+pydantic-settings
+passlib[bcrypt]
+pyjwt
+minio
+boto3
+httpx
+python-multipart
+psutil

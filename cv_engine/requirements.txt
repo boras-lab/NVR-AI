@@ -1,0 +1,9 @@
+ultralytics
+opencv-python
+lapx
+numpy<2.0.0
+pydantic
+httpx
+pyyaml
+easyocr
+# insightface # Included as comment for dummy mode vs real mode
